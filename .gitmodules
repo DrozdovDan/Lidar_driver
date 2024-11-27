@@ -1,0 +1,3 @@
+[submodule "Livox-SDK-Python"]
+	path = Livox-SDK-Python
+	url = https://github.com/DrozdovDan/Livox-SDK-Python.git
