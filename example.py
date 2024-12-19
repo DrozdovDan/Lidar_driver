@@ -124,7 +124,7 @@ def on_device_info_change(info, event_type):
         return
     print(f"OnDeviceChange broadcast code {info.broadcast_code} update type {event_type}")
     handle = info.handle
-    if handle >= kMaxLidarCount:
+    if handle >= pylivox.kMaxLidarCount:
         return
 
     if event_type == pylivox.PyDeviceEvent.EventConnect():
@@ -184,25 +184,43 @@ def add_devices_to_connect():
 
 def main():
     global lvx_file_save_time, is_read_extrinsic_from_xml
-    pylivox.PyInit()
+    print("Livox SDK initializing.")
+    # Initialize Livox-SDK.
+    if not pylivox.PyInit():
+        return -1
+    print("Livox SDK has been initialized.")
 
+    sdk_version = pylivox.PyLivoxSdkVersion()
+    pylivox.PyGetLivoxSdkVersion(sdk_version)
+    print("Livox SDK version {0}.{1}.{2} .".format(sdk_version.major, sdk_version.minor, sdk_version.patch))
+
+    # Set the callback function receiving broadcast message from Livox LiDAR.
     pylivox.PySetBroadcastCallback(on_device_broadcast)
+
+    # Set the callback function called when device state change, which means connection/disconnection and changing of LiDAR state.
     pylivox.PySetDeviceStateUpdateCallback(on_device_info_change)
-    pylivox.PyStart()
+
+    # Start the device discovering routine.
+    if not pylivox.PyStart():
+        pylivox.PyUninit()
+        return -1
+    
+    print("Start discovering device.")
 
     wait_for_devices_ready()
+
     add_devices_to_connect()
 
     if connected_lidar_count == 0:
-        print("No device connected.")
+        print("No device will be connected.")
         pylivox.PyUninit()
-        return
+        return -1
 
     wait_for_extrinsic_parameter()
 
     if not lvx_file_handler.InitLvxFile():
         pylivox.PyUninit()
-        return
+        return -1
 
     lvx_file_handler.InitLvxFileHeader()
 
@@ -216,6 +234,7 @@ def main():
             pylivox.LidarStopSampling(device["handle"], on_stop_sample_callback, None)
 
     pylivox.PyUninit()
+    return -1
 
 if __name__ == "__main__":
     main()
