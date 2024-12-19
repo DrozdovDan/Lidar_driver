@@ -67,9 +67,6 @@ def on_stop_sample_callback(status, handle, response, data):
     pass
 
 def on_get_lidar_extrinsic_parameter(status, handle, response, data):
-    return wrapped_callback(on_get_lidar_extrinsic_parameter_to_wrap, status, handle, response, data)
-
-def on_get_lidar_extrinsic_parameter_to_wrap(status, handle, response, data):
     global is_finish_extrinsic_parameter
     if status == pylivox.PyLivoxStatus.StatusSuccess() and response:
         print(f"Extrinsic parameters received for handle {handle}")
@@ -77,7 +74,7 @@ def on_get_lidar_extrinsic_parameter_to_wrap(status, handle, response, data):
             lidar_info = lvx.LvxDeviceInfo()
             lidar_info.device_index = handle
             lidar_info.device_type = devices[handle].info.type
-            lidar_info.extrinsic_enable = true
+            lidar_info.extrinsic_enable = True
             lidar_info.pitch = response.pitch
             lidar_info.roll = response.roll
             lidar_info.yaw = response.yaw
@@ -226,13 +223,15 @@ def main():
 
     for i in range(lvx_file_save_time * FRAME_RATE):
         with point_pack_condition:
-            point_pack_condition.wait(timeout=kDefaultFrameDurationTime / 1000.0)
+            point_pack_condition.wait(timeout=lvx.kDefaultFrameDurationTime / 1000.0)
 
     lvx_file_handler.CloseLvxFile()
     for device in devices:
         if device and device["device_state"] == pylivox.kDeviceStateSampling:
+            # Stop the sampling of Livox LiDAR.
             pylivox.LidarStopSampling(device["handle"], on_stop_sample_callback, None)
 
+    # Uninitialize Livox-SDK.
     pylivox.PyUninit()
     return -1
 
