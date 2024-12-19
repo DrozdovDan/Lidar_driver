@@ -6,6 +6,8 @@ from datetime import timedelta
 from collections import deque
 import pylivox
 import lvx
+import ctypes
+import faulthandler
 
 # Constants
 FRAME_RATE = 20
@@ -15,7 +17,7 @@ devices = [None] * pylivox.kMaxLidarCount
 lvx_file_handler = lvx.LvxFileHandle()
 point_packet_list = deque()
 broadcast_code_rev = []
-mtx = multiprocessing.Lock()
+mtx = threading.Lock()
 lidar_arrive_condition = threading.Condition(mtx)
 extrinsic_condition = threading.Condition(mtx)
 point_pack_condition = threading.Condition(mtx)
@@ -23,6 +25,8 @@ lvx_file_save_time = 10
 is_finish_extrinsic_parameter = False
 is_read_extrinsic_from_xml = False
 connected_lidar_count = 0
+PyGILState_Ensure = ctypes.pythonapi.PyGILState_Ensure
+PyGILState_Release = ctypes.pythonapi.PyGILState_Release
 
 broadcast_code_list = []
 
@@ -63,6 +67,9 @@ def on_stop_sample_callback(status, handle, response, data):
     pass
 
 def on_get_lidar_extrinsic_parameter(status, handle, response, data):
+    return wrapped_callback(on_get_lidar_extrinsic_parameter_to_wrap, status, handle, response, data)
+
+def on_get_lidar_extrinsic_parameter_to_wrap(status, handle, response, data):
     global is_finish_extrinsic_parameter
     if status == pylivox.PyLivoxStatus.StatusSuccess() and response:
         print(f"Extrinsic parameters received for handle {handle}")
@@ -80,7 +87,8 @@ def on_get_lidar_extrinsic_parameter(status, handle, response, data):
             lvx_file_handler.AddDeviceInfo(lidar_info)
             if lvx_file_handler.GetDeviceInfoListSize() == connected_lidar_count:
                 is_finish_extrinsic_parameter = True
-                extrinsic_condition.notify()
+                with extrinsic_condition:
+                    extrinsic_condition.notify()
     elif status == pylivox.PyLivoxStatus.StatusTimeout():
         print("GetLidarExtrinsicParameter timeout!")
     
@@ -92,7 +100,8 @@ def lidar_get_extrinsic_from_xml(handle):
     lidar_info.extrinsic_enable = True
     if lvx_file_handler.GetDeviceInfoListSize() == len(broadcast_code_list):
         is_finish_extrinsic_parameter = True
-        extrinsic_condition.notify()
+        with extrinsic_condition:
+            extrinsic_condition.notify()
 
 def on_device_information(status, handle, ack, data):
     if status != pylivox.PyLivoxStatus.StatusSuccess():
@@ -139,7 +148,8 @@ def on_device_broadcast(info):
         print(f"Broadcast code received: {info.broadcast_code}")
         if len(broadcast_code_rev) == 0 or info.broadcast_code not in broadcast_code_rev:
             broadcast_code_rev.append(info.broadcast_code)
-            lidar_arrive_condition.notify()
+            with lidar_arrive_condition:
+                lidar_arrive_condition.notify()
 
 
 def wait_for_devices_ready():
@@ -149,7 +159,7 @@ def wait_for_devices_ready():
 
     while not device_ready:
         # Wait for the condition or timeout
-        with mtx:
+        with lidar_arrive_condition:
             lidar_arrive_condition.wait(wait_time) 
 
         # Check the elapsed time
@@ -170,7 +180,7 @@ def add_devices_to_connect():
         handle = pylivox.PyAddLidarToConnect(code)
         pylivox.PySetDataCallback(handle, get_lidar_data, None)
         devices[handle] = {"handle": handle, "device_state": pylivox.kDeviceStateDisconnect}
-        connected_lidar_count += 1
+        connected_lidar_count += 1      
 
 def main():
     global lvx_file_save_time, is_read_extrinsic_from_xml
