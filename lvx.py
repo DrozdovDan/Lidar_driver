@@ -27,7 +27,7 @@ class DeviceState:
 
 # Structures
 class DeviceItem:
-    def __init__(self, handle: int, device_state: DeviceState, info: pylivox.PyDeviceInfo):
+    def __init__(self, handle: int=0, device_state: int=0, info: pylivox.PyDeviceInfo=pylivox.PyDeviceInfo()):
         self.handle = handle
         self.device_state = device_state
         self.info = info

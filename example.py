@@ -13,7 +13,7 @@ import faulthandler
 FRAME_RATE = 20
 
 # Global variables
-devices = [None] * pylivox.kMaxLidarCount
+devices = [lvx.DeviceItem() for _ in range(pylivox.kMaxLidarCount)]
 lvx_file_handler = lvx.LvxFileHandle()
 point_packet_list = deque()
 broadcast_code_rev = []
@@ -109,12 +109,15 @@ def on_device_information(status, handle, ack, data):
 def lidar_connect(info):
     handle = info.handle
     pylivox.PyQueryDeviceInformation(handle, on_device_information, None)
-    if devices[handle].device_state == pylivox.PyDeviceState.DeviceStateDisconnect():
-        devices[handle].device_state = pylivox.PyDeviceState.DeviceStateConnect() 
+    if devices[handle].device_state == lvx.DeviceState.DISCONNECT:
+        devices[handle].device_state = lvx.DeviceState.CONNECT 
         devices[handle].info = info
 
 def lidar_disconnect(info):
-    devices[info.handle].device_state = pylivox.PyDeviceState.DeviceStateDisconnect()
+    devices[info.handle].device_state = lvx.DeviceState.DISCONNECT
+
+def lidar_state_change(info):
+    devices[info.handle].info = info
 
 def on_device_info_change(info, event_type):
     if not info:
@@ -126,10 +129,20 @@ def on_device_info_change(info, event_type):
 
     if event_type == pylivox.PyDeviceEvent.EventConnect():
         lidar_connect(info)
+        print(f'[WARNING] Lidar sn: {info.broadcast_code} Connect!!!')
     elif event_type == pylivox.PyDeviceEvent.EventDisconnect():
         lidar_disconnect(info)
+        print(f'[WARNING] Lidar sn: {info.broadcast_code} Disconnect!!!')
+    elif event_type == pylivox.PyDeviceEvent.EventStateChange():
+        lidar_state_change(info)
+        print(f'[WARNING] Lidar sn: {info.broadcast_code} StateChange!!!')
 
-    if devices[handle].device_state == pylivox.PyDeviceState.DeviceStateConnect():
+    if devices[handle].device_state == lvx.DeviceState.CONNECT:
+        print(f"Device Working State {devices[handle].info.state}")
+        if devices[handle].info.state == pylivox.PyLidarState.LidarStateInit():
+            print(f"Device State Change Progress {devices[handle].info.status.progress}")
+        else:
+            print(f"Device State Error Code 0X{devices[handle].info.status.status_code.error_code}")
         pylivox.PySetErrorMessageCallback(handle, on_lidar_error_status_callback)
         if devices[handle].info.state == pylivox.PyLidarState.LidarStateNormal():
             if not lvx.is_read_extrinsic_from_xml:
@@ -137,7 +150,7 @@ def on_device_info_change(info, event_type):
             else:
                 lidar_get_extrinsic_from_xml(handle) 
             pylivox.PyLidarStartSampling(handle, on_sample_callback, None)
-            devices[handle].device_state = pylivox.PyDeviceState.DeviceStateSampling()
+            devices[handle].device_state = lvx.DeviceState.SAMPLING
 
 def on_device_broadcast(info):
     global broadcast_code_rev
@@ -167,17 +180,21 @@ def wait_for_devices_ready():
             last_time = time.monotonic()
 
 def wait_for_extrinsic_parameter():
-    extrinsic_condition.wait()
+    with extrinsic_condition:
+        extrinsic_condition.wait()
 
 def add_devices_to_connect():
     global connected_lidar_count
     for code in broadcast_code_rev:
         if broadcast_code_list and code not in broadcast_code_list:
             continue
-        handle = pylivox.PyAddLidarToConnect(code)
-        pylivox.PySetDataCallback(handle, get_lidar_data, None)
-        devices[handle] = {"handle": handle, "device_state": pylivox.kDeviceStateDisconnect}
-        connected_lidar_count += 1      
+        handle = 0
+        result, handle = pylivox.PyAddLidarToConnect(code, handle)
+        if result == pylivox.PyLivoxStatus.StatusSuccess():
+            pylivox.PySetDataCallback(handle, get_lidar_data, None)
+            devices[handle].handle = handle
+            devices[handle].device_state = lvx.DeviceState.DISCONNECT
+            connected_lidar_count += 1      
 
 def main():
     global lvx_file_save_time, is_read_extrinsic_from_xml
