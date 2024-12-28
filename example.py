@@ -8,6 +8,7 @@ import pylivox
 import lvx
 import ctypes
 import faulthandler
+import argparse
 
 # Constants
 FRAME_RATE = 20
@@ -52,24 +53,24 @@ def get_lidar_data(handle, data, data_num, client_data):
         with mtx:
             packet = lvx.LvxBasePackDetail()
             packet.device_index = handle
-            lvx_file_handler.BasePointsHandle(data, packet)
+            lvx_file_handler.base_points_handle(data, packet)
             point_packet_list.append(packet)
 
 def on_sample_callback(status, handle, response, data):
     print(f"OnSampleCallback status {status} handle {handle} response {response}")
     if status == pylivox.PyLivoxStatus.StatusSuccess():
         if response != 0:
-            devices[handle].device_state = lvx.DeviceState.kDeviceStateConnect
+            devices[handle].device_state = lvx.DeviceState.CONNECT
     elif status == pylivox.PyLivoxStatus.StatusTimeout():
-        devices[handle].device_state = lvx.DeviceState.kDeviceStateConnect
+        devices[handle].device_state = lvx.DeviceState.CONNECT
 
 def on_stop_sample_callback(status, handle, response, data):
-    pass
+    return
 
 def on_get_lidar_extrinsic_parameter(status, handle, response, data):
     global is_finish_extrinsic_parameter
     if status == pylivox.PyLivoxStatus.StatusSuccess() and response:
-        print(f"Extrinsic parameters received for handle {handle}")
+        print(f"OnGetLidarExtrinsicParameter statue {status} handle {handle} response {response.ret_code}")
         with mtx:
             lidar_info = lvx.LvxDeviceInfo()
             lidar_info.device_index = handle
@@ -81,11 +82,10 @@ def on_get_lidar_extrinsic_parameter(status, handle, response, data):
             lidar_info.x = response.x / 1000
             lidar_info.y = response.y / 1000
             lidar_info.z = response.z / 1000
-            lvx_file_handler.AddDeviceInfo(lidar_info)
-            if lvx_file_handler.GetDeviceInfoListSize() == connected_lidar_count:
+            lvx_file_handler.add_device_info(lidar_info)
+            if lvx_file_handler.get_device_info_list_size() == connected_lidar_count:
                 is_finish_extrinsic_parameter = True
-                with extrinsic_condition:
-                    extrinsic_condition.notify()
+                extrinsic_condition.notify()
     elif status == pylivox.PyLivoxStatus.StatusTimeout():
         print("GetLidarExtrinsicParameter timeout!")
     
@@ -97,14 +97,13 @@ def lidar_get_extrinsic_from_xml(handle):
     lidar_info.extrinsic_enable = True
     if lvx_file_handler.GetDeviceInfoListSize() == len(broadcast_code_list):
         is_finish_extrinsic_parameter = True
-        with extrinsic_condition:
-            extrinsic_condition.notify()
+        extrinsic_condition.notify()
 
 def on_device_information(status, handle, ack, data):
     if status != pylivox.PyLivoxStatus.StatusSuccess():
         print(f"Device Query Informations Failed {status}")
     if ack:
-        print(f"Firmware version: {'.'.join(map(str, ack.firmware_version))}")
+        print(f"firm ver: {'.'.join(map(str, ack.firmware_version))}")
 
 def lidar_connect(info):
     handle = info.handle
@@ -129,13 +128,13 @@ def on_device_info_change(info, event_type):
 
     if event_type == pylivox.PyDeviceEvent.EventConnect():
         lidar_connect(info)
-        print(f'[WARNING] Lidar sn: {info.broadcast_code} Connect!!!')
+        print(f'[WARNING] Lidar sn: [{info.broadcast_code}] Connect!!!')
     elif event_type == pylivox.PyDeviceEvent.EventDisconnect():
         lidar_disconnect(info)
-        print(f'[WARNING] Lidar sn: {info.broadcast_code} Disconnect!!!')
+        print(f'[WARNING] Lidar sn: [{info.broadcast_code}] Disconnect!!!')
     elif event_type == pylivox.PyDeviceEvent.EventStateChange():
         lidar_state_change(info)
-        print(f'[WARNING] Lidar sn: {info.broadcast_code} StateChange!!!')
+        print(f'[WARNING] Lidar sn: [{info.broadcast_code}] StateChange!!!')
 
     if devices[handle].device_state == lvx.DeviceState.CONNECT:
         print(f"Device Working State {devices[handle].info.state}")
@@ -143,13 +142,15 @@ def on_device_info_change(info, event_type):
             print(f"Device State Change Progress {devices[handle].info.status.progress}")
         else:
             print(f"Device State Error Code 0X{devices[handle].info.status.status_code.error_code}")
+        print(f"Device feature {devices[handle].info.feature}")
         pylivox.PySetErrorMessageCallback(handle, on_lidar_error_status_callback)
         if devices[handle].info.state == pylivox.PyLidarState.LidarStateNormal():
-            if not lvx.is_read_extrinsic_from_xml:
+            if not is_read_extrinsic_from_xml:
                 pylivox.PyLidarGetExtrinsicParameter(handle, on_get_lidar_extrinsic_parameter, None)
             else:
                 lidar_get_extrinsic_from_xml(handle) 
-            pylivox.PyLidarStartSampling(handle, on_sample_callback, None)
+            status = pylivox.PyLidarStartSampling(handle, on_sample_callback, None)
+            print(f"SAMPLING STATUS: {status}")
             devices[handle].device_state = lvx.DeviceState.SAMPLING
 
 def on_device_broadcast(info):
@@ -169,6 +170,7 @@ def wait_for_devices_ready():
 
     while not device_ready:
         # Wait for the condition or timeout
+        
         with lidar_arrive_condition:
             lidar_arrive_condition.wait(wait_time) 
 
@@ -197,7 +199,7 @@ def add_devices_to_connect():
             connected_lidar_count += 1      
 
 def main():
-    global lvx_file_save_time, is_read_extrinsic_from_xml
+    global lvx_file_save_time, is_read_extrinsic_from_xml, point_packet_list
     print("Livox SDK initializing.")
     # Initialize Livox-SDK.
     if not pylivox.PyInit():
@@ -229,29 +231,87 @@ def main():
         print("No device will be connected.")
         pylivox.PyUninit()
         return -1
-
+    
     wait_for_extrinsic_parameter()
 
-    if not lvx_file_handler.InitLvxFile():
+    print("Start initialize lvx file.")
+    if not lvx_file_handler.init_lvx_file():
         pylivox.PyUninit()
         return -1
 
-    lvx_file_handler.InitLvxFileHeader()
+    lvx_file_handler.init_lvx_file_header()
 
+    last_time = time.monotonic()
     for i in range(lvx_file_save_time * FRAME_RATE):
+        point_packet_list_temp = deque()
         with point_pack_condition:
-            point_pack_condition.wait(timeout=lvx.kDefaultFrameDurationTime / 1000.0)
+            point_pack_condition.wait(lvx.kDefaultFrameDurationTime / 1000.0 - (time.monotonic() - last_time) / 1000.0)
+        last_time = time.monotonic()
+        point_packet_list_temp = point_packet_list
+        point_packet_list = deque()
 
-    lvx_file_handler.CloseLvxFile()
+        if not point_packet_list_temp:
+            print("Point cloud packet is empty.")
+            break
+
+        print(f'Finish save {i} frame to lvx file.')
+        lvx_file_handler.save_frame_to_lvx_file(point_packet_list_temp)
+
+    lvx_file_handler.close_lvx_file()
     for device in devices:
-        if device and device["device_state"] == pylivox.kDeviceStateSampling:
+        if device and device.device_state == lvx.DeviceState.SAMPLING:
             # Stop the sampling of Livox LiDAR.
-            pylivox.LidarStopSampling(device["handle"], on_stop_sample_callback, None)
+            pylivox.PyLidarStopSampling(device.handle, on_stop_sample_callback, None)
 
     # Uninitialize Livox-SDK.
     pylivox.PyUninit()
     return -1
 
+class CodeAction(argparse.Action):
+
+    def __init__(self, option_strings, dest, nargs = None, const = None, default = None, type = None, choices = None, required = False, help = None, metavar = None):
+        super().__init__(option_strings, dest, nargs, const, default, type, choices, required, help, metavar)
+
+    def __call__(self, parser, namespace, values, option_string = None):
+        global broadcast_code_list
+        print(f'Register broadcast code: {values}.')
+        broadcast_code_list = values.split('&')
+
+class LogAction(argparse.Action):
+    
+    def __init__(self, option_strings, dest, nargs = None, const = None, default = None, type = None, choices = None, required = False, help = None, metavar = None):
+        super().__init__(option_strings, dest, nargs, const, default, type, choices, required, help, metavar)
+
+    def __call__(self, parser, namespace, values, option_string = None):
+        print('Save the log file.')
+        pylivox.PySaveLoggerFile()
+
+class TimeAction(argparse.Action):
+
+    def __init__(self, option_strings, dest, nargs = None, const = None, default = None, type = None, choices = None, required = False, help = None, metavar = None):
+        super().__init__(option_strings, dest, nargs, const, default, type, choices, required, help, metavar)
+
+    def __call__(self, parser, namespace, values, option_string = None):
+        global lvx_file_save_time
+        print(f'Time to save point cloud to the lvx file:{values}.')
+        lvx_file_save_time = time
+
+class ParamAction(argparse.Action):
+
+    def __init__(self, option_strings, dest, nargs = None, const = None, default = None, type = None, choices = None, required = False, help = None, metavar = None):
+        super().__init__(option_strings, dest, nargs, const, default, type, choices, required, help, metavar)
+
+    def __call__(self, parser, namespace, values, option_string = None):
+        global is_read_extrinsic_from_xml
+        print('Get the extrinsic parameter from extrinsic.xml file.')
+        is_read_extrinsic_from_xml = True
+
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-c', '--code', help='Register device broadcast code', type=str, action=CodeAction)
+    parser.add_argument('-l', '--log', help='Save the log file', action=LogAction)
+    parser.add_argument('-t', '--time', help='Time to save point cloud to the lvx file', type=int, action=TimeAction)
+    parser.add_argument('-p', '--param', help='Get the extrinsic parameter from extrinsic.xml file', action=ParamAction)
+
     main()
 

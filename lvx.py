@@ -33,20 +33,20 @@ class DeviceItem:
         self.info = info
 
 class LvxFilePublicHeader:
-    def __init__(self, signature: bytes, version: bytes, magic_code: int):
+    def __init__(self, signature: bytes=0, version: bytes=0, magic_code: int=0):
         self.signature = signature  # 16 bytes
         self.version = version  # 4 bytes
         self.magic_code = magic_code  # 4 bytes
 
 class LvxFilePrivateHeader:
-    def __init__(self, frame_duration: int, device_count: int):
+    def __init__(self, frame_duration: int=0, device_count: int=0):
         self.frame_duration = frame_duration
         self.device_count = device_count
 
 class LvxDeviceInfo:
-    def __init__(self, lidar_broadcast_code: bytes, hub_broadcast_code: bytes, 
-                 device_index: int, device_type: int, extrinsic_enable: int,
-                 roll: float, pitch: float, yaw: float, x: float, y: float, z: float):
+    def __init__(self, lidar_broadcast_code: bytes=bytearray(b'0' * 16), hub_broadcast_code: bytes=bytearray(b'0' * 16), 
+                 device_index: int=0, device_type: int=0, extrinsic_enable: int=0,
+                 roll: float=0.0, pitch: float=0.0, yaw: float=0.0, x: float=0.0, y: float=0.0, z: float=0.0):
         self.lidar_broadcast_code = lidar_broadcast_code  # 16 bytes
         self.hub_broadcast_code = hub_broadcast_code  # 16 bytes
         self.device_index = device_index
@@ -60,9 +60,9 @@ class LvxDeviceInfo:
         self.z = z
 
 class LvxBasePackDetail:
-    def __init__(self, device_index: int, version: int, port_id: int, lidar_index: int, 
-                 rsvd: int, error_code: int, timestamp_type: int, data_type: int, 
-                 timestamp: bytes, raw_point: bytes, pack_size: int):
+    def __init__(self, device_index: int=0, version: int=0, port_id: int=0, lidar_index: int=0, 
+                 rsvd: int=0, error_code: int=0, timestamp_type: int=0, data_type: int=0, 
+                 timestamp: bytes=bytearray(b'0' * 8), raw_point: bytes=bytearray(b'0' * kMaxPointSize), pack_size: int=0):
         self.device_index = device_index
         self.version = version
         self.port_id = port_id
@@ -76,7 +76,7 @@ class LvxBasePackDetail:
         self.pack_size = pack_size
 
 class FrameHeader:
-    def __init__(self, current_offset: int, next_offset: int, frame_index: int):
+    def __init__(self, current_offset: int=0, next_offset: int=0, frame_index: int=0):
         self.current_offset = current_offset
         self.next_offset = next_offset
         self.frame_index = frame_index
@@ -127,7 +127,7 @@ class LvxFileHandle:
 
         for device_info in self.device_info_list:
             struct.pack_into(
-                "16s16sBBBBfff",
+                "16s16sBBBffffff",
                 write_buffer, self.cur_offset,
                 device_info.lidar_broadcast_code,
                 device_info.hub_broadcast_code,
@@ -175,12 +175,18 @@ class LvxFileHandle:
         self.cur_offset = frame_header.next_offset
         self.cur_frame_index += 1
 
+    def add_device_info(self, info: LvxDeviceInfo):
+        self.device_info_list.append(info)
+
+    def get_device_info_list_size(self):
+        return len(self.device_info_list)
+
     def close_lvx_file(self):
         if self.lvx_file:
             self.lvx_file.close()
             self.lvx_file = None
 
-    def base_points_handle(self, data: Any, packet: LvxBasePackDetail):
+    def base_points_handle(self, data: pylivox.PyLivoxEthPacket, packet: LvxBasePackDetail):
         packet.version = data.version
         packet.port_id = data.slot
         packet.lidar_index = data.id
